@@ -1,14 +1,23 @@
-import numpy as np
 import random
 import time
-from game import SnakeGame, Direction, Point
+import argparse
+
+import numpy as np
+
+from game import Direction, Point, SnakeGame
 from qlearn import Qlearn
 from deepqlearn import DeepQlearn
 
 class Agent:
-    
+    """
+    Reinforcement learning agent for Snake
+
+    Supports both Q-learning and deep Q-learning.
+
+    It builds the 11-feature state representation, selects actions,
+    and either trains the model or plays using previously saved weights
+    """
     def __init__(self, mode, model_type):
-        
         self.nb_games = 0
         self.epsilon = 0
         self.discount_factor = 0.9
@@ -16,14 +25,14 @@ class Agent:
         self.ite = 0
         self.record = 0
         self.mode = mode
-        
         self.model_type = model_type
 
         if self.model_type == "deepqlearn":
             self.model = DeepQlearn(self.learning_rate)
-
-        if self.model_type == "qlearn":
+        elif self.model_type == "qlearn":
             self.model = Qlearn()
+        else:
+            raise ValueError("Unknown model type")
         
         if self.mode == "play":
             self.model.load()
@@ -40,11 +49,9 @@ class Agent:
         self.done_memory = []
         
         self.memory_size = 0
+        self.max_memory = 10_000
         
-        self.max_memory = 10000
-        
-    def get_state(self,game):
-
+    def get_state(self, game):
         head = game.snake[0]
 
         point_l = Point(head.x - game.block_size, head.y)
@@ -67,12 +74,12 @@ class Agent:
             # danger right
             (dir_u and game.is_collision(point_r)) or
             (dir_d and game.is_collision(point_l)) or
-            (dir_u and game.is_collision(point_u)) or
-            (dir_d and game.is_collision(point_d)),
+            (dir_l and game.is_collision(point_u)) or
+            (dir_r and game.is_collision(point_d)),
 
             # danger left
-            (dir_u and game.is_collision(point_r)) or
-            (dir_d and game.is_collision(point_l)) or
+            (dir_u and game.is_collision(point_l)) or
+            (dir_d and game.is_collision(point_r)) or
             (dir_r and game.is_collision(point_u)) or
             (dir_l and game.is_collision(point_d)),
 
@@ -88,24 +95,24 @@ class Agent:
             game.food.y < game.head.y, # food is above
             game.food.y > game.head.y  # food is down
         ]
-        return np.array(state,dtype=int)
-        
+        return np.array(state, dtype=int)
         
     def get_move(self, state):
-        U = random.uniform(0, 1)
         action = [0, 0, 0]
-        if U < self.epsilon:
-            action[random.randrange(0, 2)] = 1
+
+        if random.uniform(0, 1) < self.epsilon:
+            action[random.randrange(0, 3)] = 1
             return action
+        
+        if self.model_type == "deepqlearn":
+            action[np.argmax(self.model.predict(state))] = 1
+            return action
+        elif self.model_type == "qlearn":
+            return self.model.predict(state)
         else:
-            if self.model_type == "deepqlearn":
-                action[np.argmax(self.model.predict(state))] = 1
-                return action
-            elif self.model_type == "qlearn":
-                return self.model.predict(state)
+            raise ValueError("Unknown model type")
                
     def replay(self, batch_size=32): # replay experience
-        
         batch = np.random.choice(len(self.state_memory), batch_size, replace=False)
         
         states = self.state_memory[batch]
@@ -115,32 +122,40 @@ class Agent:
         dones = self.done_memory[batch]
         
         targets = self.model.predict(states)
-        targets_f = self.model.predict(next_states)
+        targets_next = self.model.predict(next_states)
         
         for idx in range(batch_size):
             y = rewards[idx][0]
-            if not dones[idx]:
-                y += self.discount_factor * max(targets_f[idx])       
+            if not dones[idx][0]:
+                y += self.discount_factor * np.max(targets_next[idx])       
             targets[idx][np.argmax(actions[idx])] = y
         
         self.model.model.fit(states, targets, verbose=0)
         
     def train(self, state, action, reward, next_state, done):
-        if self.mode == "train":
-            if self.model_type == "qlearn":
-                self.model.train(state, action, next_state, reward, self.learning_rate, self.discount_factor)
-            else:
-                self.remember(state, action, reward, next_state, done)
-                if (self.memory_size > 32):
-                    self.replay()
+        if self.mode != "train":
+            return
+
+        if self.model_type == "qlearn":
+            self.model.train(
+                state,
+                action,
+                next_state,
+                reward,
+                self.learning_rate,
+                self.discount_factor
+            )
+        else:
+            self.remember(state, action, reward, next_state, done)
+            if self.memory_size > 32:
+                self.replay()
         
-    def remember(self,state,action,reward,next_state,done):
+    def remember(self, state, action, reward, next_state, done):
+        self.memory_size += 1
         
-        self.memory_size +=1
-        
-        action = np.reshape(action,((1, 3)))
-        reward = np.reshape(reward,(1, 1))
-        done = np.reshape(done,(1, 1))
+        action = np.reshape(action, (1, 3))
+        reward = np.reshape(reward, (1, 1))
+        done = np.reshape(done, (1, 1))
         
         if self.memory_size == 1:
             self.state_memory = state
@@ -155,13 +170,11 @@ class Agent:
             self.action_memory = np.concatenate((self.action_memory, action), axis=0)   
             self.reward_memory = np.concatenate((self.reward_memory, reward), axis=0) 
             self.next_state_memory = np.concatenate((self.next_state_memory, next_state), axis=0) 
-            self.done_memory = np.concatenate((self.done_memory,done), axis=0)
+            self.done_memory = np.concatenate((self.done_memory, done), axis=0)
             
         else:
-
-            index = self.memory_size % self.max_memory
-            
-            self.state_memory[index] =state
+            index = (self.memory_size - 1) % self.max_memory
+            self.state_memory[index] = state
             self.action_memory[index] = action
             self.reward_memory[index] = reward
             self.next_state_memory[index] = next_state
@@ -173,16 +186,17 @@ class Agent:
     def load(self):
         self.model.load()
     
-def play(mode, model):
-    
+def play(mode, model, height=800, width=800, speed=None):
     # exponential moving average to track the evolution over the last games
-    mean_score = 0
+    mean_score = None
     alpha = 0.95
     
     # create the game and the agent
-    speed = 10 if mode == "play" else 10_000 # fast training
+    if speed is None:
+        speed = 20 if mode == "play" else 100_000
+        
     agent = Agent(mode, model)
-    game = SnakeGame(h=800, w=800, speed=speed)
+    game = SnakeGame(h=height, w=width, speed=speed, show_game=(mode == "play"))
     current_time = time.time()
 
     while True:
@@ -201,30 +215,48 @@ def play(mode, model):
             
         agent.train(state, action, reward, next_state, done)
         
-        state = next_state
-        
         if done:
-            agent.ite +=1
-            agent.epsilon = agent.epsilon * 0.9 # lower the epsilon exploration parameter
+            agent.ite += 1
+            agent.epsilon *= 0.9 # lower the epsilon exploration parameter
             
-            if (game.score > agent.record): # best result so far
+            if game.score > agent.record: # best result so far
                 agent.record = game.score
                 agent.save() # save the new best config
             
-            mean_score = round(alpha * mean_score + (1 - alpha) * score, 2)
+            if mean_score is not None:
+                mean_score = round(alpha * mean_score + (1 - alpha) * score, 2) 
+            else:
+                mean_score = score
+
             timer = round(time.time() - current_time, 2)
             
-            print(f"Game {agent.ite} Score {game.score} Record {agent.record} \
-                    EMA {mean_score} Time {timer} seconds")
+            print(f"Game {agent.ite} Score {game.score} Record {agent.record} "
+                  f"Average {mean_score} Time {timer} seconds")
                 
             game.reset() # launch a new game
 
          
 if __name__ == '__main__':
-    
-    mode = "train" # or train
-    model = "qlearn" # or deepqlearn
 
-    play(mode, model)
-        
-        
+    parser = argparse.ArgumentParser(description="Snake RL agent")
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="train",
+        choices=["train", "play"],
+        help="mode type"
+    )
+
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="deepqlearn",
+        choices=["qlearn", "deepqlearn"],
+        help="model type"
+    )
+
+    args = parser.parse_args()
+
+    print(f"Running {args.model} as {args.mode} mode")
+    play(args.mode, args.model, height=400, width=400, speed=300)
