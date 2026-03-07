@@ -243,7 +243,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--mode",
         type=str,
-        default="train",
+        default="play",
         choices=["train", "play"],
         help="mode type"
     )
@@ -251,7 +251,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--model",
         type=str,
-        default="deepqlearn",
+        default="qlearn",
         choices=["qlearn", "deepqlearn"],
         help="model type"
     )
