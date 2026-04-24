@@ -48,6 +48,5 @@ If the full game grid were used as input for the Deep Q-learning model, it would
 
 ## References
 
-<a id="1">[1]</a> 
 Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan Wierstra, Martin Riedmiller (2013). Playing Atari with Deep Reinforcement Learning
 
